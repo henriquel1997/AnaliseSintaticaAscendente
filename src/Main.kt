@@ -1,4 +1,3 @@
-import java.util.*
 import kotlin.collections.HashMap
 
 enum class Tipo {
@@ -46,17 +45,45 @@ class Elemento {
 }
 
 class NoAutomato {
+    companion object {
+        var idCont = 0
+    }
+
+    var id: Int = idCont++
     var nome: String = ""
     var regra: SubRegra? = SubRegra()
     var posPonto : Int = -1
     var transicoes = mutableListOf<Pair<String?, NoAutomato>>()
+
+    override fun equals(other: Any?): Boolean {
+        return other is NoAutomato && other.nome === nome && other.regra == regra
+    }
+
+    override fun hashCode(): Int {
+        var result = nome.hashCode()
+        result = 31 * result + (regra?.hashCode() ?: 0)
+        result = 31 * result + posPonto
+        result = 31 * result + transicoes.hashCode()
+        return result
+    }
+}
+
+class Fecho {
+    companion object {
+        var idCont = 0
+    }
+
+    var id: Int = idCont++
+    val alcancaveis: MutableList<Int> = mutableListOf()
+    val proximos: HashMap<String, Int> = hashMapOf()
 }
 
 val regras: MutableList<Regra> = mutableListOf()
 val firstMap: HashMap<String, List<String>> = hashMapOf()
 val followMap: HashMap<String, MutableList<String>> = hashMapOf()
 val inicioAutomato = NoAutomato()
-var noAutomatoMap : HashMap<String, MutableList<NoAutomato>> = hashMapOf()
+val noAutomatoMap : HashMap<String, MutableList<NoAutomato>> = hashMapOf()
+val fechoMap : HashMap<Int, Fecho> = hashMapOf() // Key = ID do Nó, Value = Fecho do Nó
 val tabela: HashMap<Pair<Char, String>, SubRegra> = hashMapOf()
 
 const val epsilon = "null"
@@ -71,6 +98,7 @@ fun main(){
 
     processarGramatica(gramatica)
     gerarAFNEpsilon()
+    gerarFechoEspilon(inicioAutomato)
     println()
 
 }
@@ -425,4 +453,42 @@ fun aplicarRegrasAFNEpsilon(no: NoAutomato){
         no.transicoes.add(Pair(elemento.nome, novoNo))
         aplicarRegrasAFNEpsilon(novoNo)
     }
+}
+
+/**Fecho Epsilon**/
+
+fun gerarFechoEspilon(no: NoAutomato): Fecho {
+    val fecho = Fecho()
+
+    fechoMap[no.id] = fecho
+
+    val transicoes = no.transicoes
+
+    var i = 0
+    while(i < transicoes.size){
+        val transicao = transicoes[i]
+        val t = transicao.first
+        if(t == null){
+            fecho.alcancaveis.add(transicao.second.id)
+
+            for (proximaTransicao in transicao.second.transicoes){
+                if(!transicoes.contains(proximaTransicao)){
+                    transicoes.add(proximaTransicao)
+                }
+            }
+        }else{
+            val fechoProximo = if(fechoMap[transicao.second.id] == null){
+                gerarFechoEspilon(transicao.second)
+            }else{
+                fechoMap[transicao.second.id]
+            }
+            fecho.proximos[t] = fechoProximo?.id ?: -1
+        }
+        i++
+    }
+
+    fechoMap[no.id] = fecho
+
+    return fecho
+
 }
