@@ -1,3 +1,5 @@
+import java.lang.Exception
+import java.util.*
 import kotlin.collections.HashMap
 
 enum class Tipo {
@@ -82,9 +84,12 @@ val regras: MutableList<Regra> = mutableListOf()
 val firstMap: HashMap<String, List<String>> = hashMapOf()
 val followMap: HashMap<String, MutableList<String>> = hashMapOf()
 val inicioAutomato = NoAutomato()
+val listaNoAutomato = mutableListOf<NoAutomato>()
 val noAutomatoMap : HashMap<String, MutableList<NoAutomato>> = hashMapOf()
 val fechoMap : HashMap<Int, Fecho> = hashMapOf() // Key = ID do Nó, Value = Fecho do Nó
-val tabela: HashMap<Pair<Char, String>, SubRegra> = hashMapOf()
+val listaFecho = mutableListOf<Fecho>()
+val tabelaAction: HashMap<Pair<Int, Char>, String> = hashMapOf()
+val tabelaGoto: HashMap<Pair<Int, String>, Int> = hashMapOf()
 
 const val epsilon = "null"
 const val endLineValue = "$"
@@ -94,12 +99,18 @@ fun main(){
         <A>::=(<A>)|a
     """.trimIndent()
 
-    val string = "a90 * (35+9) / (b)$endLineValue".replace(" ".toRegex(), "")
+    val string = "(((a)))$endLineValue".replace(" ".toRegex(), "")
 
+    val tempoInicio = System.currentTimeMillis()
     processarGramatica(gramatica)
     gerarAFNEpsilon()
-    gerarFechoEspilon(inicioAutomato)
-    println()
+    gerarFechoEpsilon(inicioAutomato)
+    gerarFirst()
+    gerarFollow()
+    gerarTabela()
+    val tempoFim = System.currentTimeMillis()
+    println("String: $string -> Reconhecida: ${analisarString(string)}")
+    print("Tempo total: ${tempoFim - tempoInicio}(ms)")
 
 }
 
@@ -255,32 +266,6 @@ fun gerarFirstElemento(elemento: Elemento){
     }
 }
 
-fun mostrarFirsts(){
-    println("First:\n")
-    for(chave in firstMap.keys){
-        var first = ""
-        var pular = false
-        firstMap[chave]?.let {
-            if(it.size > 1){
-                for(string in it){
-                    if(first.isEmpty()){
-                        first = string
-                    }else{
-                        first += ", $string"
-                    }
-                }
-            }else{
-                pular = true
-            }
-        }
-
-        if(!pular){
-            println("$chave: $first")
-        }
-    }
-    println()
-}
-
 /**FOLLOW**/
 
 fun gerarFollow(){
@@ -356,25 +341,6 @@ fun followRegra3(){
             }
         }
     }
-}
-
-fun mostrarFollows(){
-    println("Follow:\n")
-    for(chave in followMap.keys){
-        var follow = ""
-        followMap[chave]?.let { lista ->
-            for(string in lista){
-                if(follow.isEmpty()){
-                    follow = string
-                }else{
-                    follow += ", $string"
-                }
-            }
-        }
-
-        println("$chave: $follow")
-    }
-    println()
 }
 
 /**AFN-Epsilon**/
@@ -453,12 +419,15 @@ fun aplicarRegrasAFNEpsilon(no: NoAutomato){
         no.transicoes.add(Pair(elemento.nome, novoNo))
         aplicarRegrasAFNEpsilon(novoNo)
     }
+
+    listaNoAutomato.add(no)
 }
 
-/**Fecho Epsilon**/
+/**Fecho-Epsilon**/
 
-fun gerarFechoEspilon(no: NoAutomato): Fecho {
+fun gerarFechoEpsilon(no: NoAutomato): Fecho {
     val fecho = Fecho()
+    fecho.alcancaveis.add(no.id)
 
     fechoMap[no.id] = fecho
 
@@ -470,7 +439,6 @@ fun gerarFechoEspilon(no: NoAutomato): Fecho {
         val t = transicao.first
         if(t == null){
             fecho.alcancaveis.add(transicao.second.id)
-
             for (proximaTransicao in transicao.second.transicoes){
                 if(!transicoes.contains(proximaTransicao)){
                     transicoes.add(proximaTransicao)
@@ -478,7 +446,7 @@ fun gerarFechoEspilon(no: NoAutomato): Fecho {
             }
         }else{
             val fechoProximo = if(fechoMap[transicao.second.id] == null){
-                gerarFechoEspilon(transicao.second)
+                gerarFechoEpsilon(transicao.second)
             }else{
                 fechoMap[transicao.second.id]
             }
@@ -488,7 +456,123 @@ fun gerarFechoEspilon(no: NoAutomato): Fecho {
     }
 
     fechoMap[no.id] = fecho
+    listaFecho.add(fecho)
 
     return fecho
 
+}
+
+/**Tabela**/
+
+fun gerarTabela(){
+    if(regras.isNotEmpty()){
+        //Adicionando o ACC
+        tabelaAction[Pair(getIdFechoSubRegra(regras[0].subRegras[0]), '$')] = "ACC"
+
+        //Gerando os Shifts e Goto
+        for(chave in fechoMap.keys){
+            fechoMap[chave]?.let { fecho ->
+                for(string in fecho.proximos.keys){
+                    fecho.proximos[string]?.let { idProximo ->
+                        if(regras.firstOrNull{ it.nome == string } == null){
+                            tabelaAction[Pair(fecho.id, string[0])] = "S$idProximo"
+                        }else{
+                            tabelaGoto[Pair(fecho.id, string)] = idProximo
+                        }
+                    }
+                }
+            }
+        }
+
+        //Gerando o Reduces
+        var cont = 0
+        for(regra in regras){
+            for(subRegra in regra.subRegras){
+                if(cont > 0){
+                    val idFecho = getIdFechoSubRegra(subRegra)
+                    followMap[regra.nome]?.let {
+                        for(string in it){
+                            tabelaAction[Pair(idFecho, string[0])] = "R$cont"
+                        }
+                    }
+                }
+                cont++
+            }
+        }
+    }
+}
+
+fun getIdFechoSubRegra(subRegra: SubRegra): Int {
+    var id = -1
+    for(no in listaNoAutomato){
+        if(no.posPonto == subRegra.elementos.size && no.regra == subRegra){
+            id = fechoMap[no.id]?.id ?: -1
+        }
+    }
+
+    return id
+}
+
+fun analisarString(string: String): Boolean{
+    val pilha = Stack<String>()
+    pilha.push("0")
+
+    var cursor = 0
+
+    while(true){
+        pilha.peek()?.let { valor ->
+            if(valor.toIntOrNull() != null){
+                val estado = valor.toInt()
+                val char = string[cursor]
+                tabelaAction[Pair(estado, char)]?.let { comando ->
+                    if(comando == "ACC"){
+                        return true
+                    }
+
+                    val proxEstado = comando.substring(1).toInt()
+                    when(comando[0]){
+                        'S' -> {
+                            pilha.push(char.toString())
+                            pilha.push(proxEstado.toString())
+                            cursor++
+                        }
+                        'R' -> {
+                            getSubRegra(proxEstado)?.let {
+                                try{
+                                    for(i in 0 until it.second.elementos.size * 2){
+                                        pilha.pop() ?: return false
+                                    }
+                                }catch (e: Exception){
+                                    return false
+                                }
+                                pilha.push(it.first)
+
+                            } ?: return false
+                        }
+                        else -> return false
+                    }
+                } ?: return false
+            }else{
+                pilha[pilha.size - 2]?.toIntOrNull()?.let { estado ->
+                    val naoTerminal = pilha.peek()
+                    tabelaGoto[Pair(estado, naoTerminal)]?.let {
+                        pilha.push(it.toString())
+                    } ?: return false
+                } ?: return false
+            }
+        } ?: return false
+    }
+}
+
+fun getSubRegra(pos: Int): Pair<String, SubRegra>?{
+    var cont = 0
+    for(regra in regras){
+        for(subRegra in regra.subRegras){
+            if(cont == pos){
+                return Pair(regra.nome, subRegra)
+            }
+            cont++
+        }
+    }
+    return null
 }
